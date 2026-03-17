@@ -1,0 +1,25 @@
+# Core
+fastapi
+uvicorn
+python-dotenv
+
+# Document parsing
+pymupdf
+pdfplumber
+pytesseract
+Pillow
+
+# Chunking
+langchain
+langchain-community
+
+# Embedding
+sentence-transformers
+transformers
+torch  # we'll install this separately for CUDA
+
+# Vector DB
+chromadb
+
+# LLM interface
+ollama
