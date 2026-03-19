@@ -1,5 +1,6 @@
 # app/ingestion/pdf_parser.py
 import fitz  # PyMuPDF
+from pathlib import Path
 
 
 def is_heading(line: dict, avg_font_size: float) -> bool:
@@ -68,7 +69,7 @@ def extract_sections_from_pdf(file_path: str) -> list[dict]:
                     sections.append({
                         "heading": current_heading,
                         "text": " ".join(current_content),
-                        "source": file_path.split("/")[-1],
+                        "source": Path(file_path).name,
                         "page": page_num + 1,
                         "file_type": "pdf"
                     })
