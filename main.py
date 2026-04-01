@@ -26,7 +26,7 @@ def banner():
 
 
 # ── Supported file types (extend here later) ─────────────────────────────────
-SUPPORTED_EXTENSIONS = {".pdf"}
+SUPPORTED_EXTENSIONS = {".pdf", ".txt", ".docx", ".png", ".jpg", ".jpeg"}
 
 
 def resolve_path(raw: str) -> Path:
@@ -50,12 +50,11 @@ def ingest_document(file_path: Path) -> bool:
     print(c(f"\n  ● Ingesting: {file_path.name}", CYAN))
 
     try:
-        # Dispatch by file type — add more loaders here later (docx, txt …)
-        if ext == ".pdf":
-            from app.pipeline.ingest_pipeline import ingest_pdf_pipeline
-            result = ingest_pdf_pipeline(str(file_path))
+        # Dispatch generic ingest pipeline
+        from app.pipeline.ingest_pipeline import ingest_file_pipeline
+        result = ingest_file_pipeline(str(file_path))
 
-        print(c(f"  ✔ Done — {result['chunks']} chunks stored.\n", GREEN))
+        print(c(f"  ✔ Done — {result.get('chunks', 0)} chunks stored.\n", GREEN))
         return True
 
     except Exception as e:
@@ -102,7 +101,7 @@ def query_loop():
 # ── Ingestion prompt (reusable) ───────────────────────────────────────────────
 def prompt_and_ingest() -> bool:
     """Ask the user for a file path and ingest it. Returns True on success."""
-    print(c("\n  Supported types: PDF (more coming soon)", DIM))
+    print(c("\n  Supported types: PDF, TXT, DOCX, PNG, JPG", DIM))
     try:
         raw = input(c("  Document path › ", CYAN, BOLD)).strip()
     except (KeyboardInterrupt, EOFError):

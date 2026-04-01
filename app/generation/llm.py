@@ -1,5 +1,6 @@
-import requests
 import json
+
+import requests
 
 
 def stream_answer(query: str, context_chunks: list[str]):
@@ -18,7 +19,7 @@ IMPORTANT RULES:
 - Do NOT use outside knowledge
 - Do NOT show thinking or reasoning steps
 - Be concise and structured
-- If answer is not in context, say: "Not found in provided documents"
+- If the context is empty or the context is not relevant to the query, say: "Not found in provided documents"
 
 RESPONSE FORMAT (STRICT):
 
@@ -26,6 +27,7 @@ Answer:
 - Point 1
 - Point 2
 - Point 3
+- And so on...
 
 Citations:
 - [Source: <filename>, Page: <page>, Section: <heading>]
@@ -54,10 +56,12 @@ Answer:
             "stream": True,
             "options": {
                 "temperature": 0.2,  # 🔥 reduces hallucination
-                "top_p": 0.9
-            }
+                "top_p": 0.9,
+                "num_ctx": 4096,  # Limit context window for 4GB VRAM
+                "num_predict": 512,  # Prevent runaway generation consuming VRAM
+            },
         },
-        stream=True
+        stream=True,
     )
 
     # 🔥 Stream tokens safely
