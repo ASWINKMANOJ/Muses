@@ -69,13 +69,16 @@
       <div class="docs-section">
         <div class="docs-header">
           <span class="docs-title">Ingested Documents</span>
-          <button class="btn-refresh" id="btnRefresh" title="Refresh">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2.5">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-          </button>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="docs-selected-badge" id="docsSelectedBadge" style="display:none"></span>
+            <button class="btn-refresh" id="btnRefresh" title="Refresh">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.5">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+              </svg>
+            </button>
+          </div>
         </div>
         <div class="docs-list" id="docsList">
           <p class="docs-empty" id="docsEmpty">No documents yet.</p>
@@ -103,6 +106,13 @@
 
       <!-- Input bar -->
       <div class="input-bar">
+        <!-- Filter pill: shows which documents are being searched -->
+        <div class="filter-bar">
+          <div class="doc-filter-pill all" id="filterPill">
+            <span class="pill-dot"></span>
+            <span class="pill-text" id="filterPillText">All Documents</span>
+          </div>
+        </div>
         <div class="input-wrap">
           <textarea
             id="queryInput"

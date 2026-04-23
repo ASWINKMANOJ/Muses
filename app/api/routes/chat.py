@@ -12,9 +12,13 @@ from app.generation.llm import stream_answer
 
 router = APIRouter()
 
+# Number of reranked chunks to pass to the LLM
+TOP_K = 5
+
 
 class ChatRequest(BaseModel):
     query: str
+    document_filter: list[str] = []   # empty = search all documents
 
 
 def _build_citations(results: list) -> list:
@@ -33,18 +37,26 @@ def _build_citations(results: list) -> list:
     return citations
 
 
-async def _sse_generator(query: str) -> AsyncGenerator[str, None]:
+async def _sse_generator(
+    query: str,
+    document_filter: list[str],
+) -> AsyncGenerator[str, None]:
     """
-    Async SSE generator that:
-    1. Streams LLM tokens as  data: {"token": "..."}
-    2. Sends a final event:   data: {"done": true, "citations": [...]}
+    Async SSE generator:
+    1. Retrieves relevant chunks (optionally filtered to selected documents).
+    2. Streams LLM tokens as   data: {"token": "..."}
+    3. Sends a final event:    data: {"done": true, "citations": [...]}
     """
-    # Retrieve relevant chunks
-    results = query_similar(query)
-    top_results = results[:3]
+    # ── Retrieve & rerank ────────────────────────────────────────────────────
+    results = query_similar(
+        query,
+        n_results=10,
+        document_filter=document_filter if document_filter else None,
+    )
+    top_results = results[:TOP_K]
 
-    top_chunks = []
-    for score, doc, meta in top_results:
+    top_chunks: list[str] = []
+    for _score, doc, meta in top_results:
         formatted = (
             f"[Source: {meta['source']} | Page: {meta['page']} "
             f"| Section: {meta['heading']}]\n{doc}"
@@ -53,7 +65,7 @@ async def _sse_generator(query: str) -> AsyncGenerator[str, None]:
 
     citations = _build_citations(top_results)
 
-    # Stream tokens from LLM (stream_answer is a sync generator — run in executor)
+    # ── Stream LLM tokens ────────────────────────────────────────────────────
     loop = asyncio.get_event_loop()
     token_gen = stream_answer(query, top_chunks)
 
@@ -67,12 +79,10 @@ async def _sse_generator(query: str) -> AsyncGenerator[str, None]:
         token = await loop.run_in_executor(None, _next_token)
         if token is None:
             break
-        payload = json.dumps({"token": token})
-        yield f"data: {payload}\n\n"
+        yield f"data: {json.dumps({'token': token})}\n\n"
 
-    # Final event with citations
-    done_payload = json.dumps({"done": True, "citations": citations})
-    yield f"data: {done_payload}\n\n"
+    # ── Final event with citations ───────────────────────────────────────────
+    yield f"data: {json.dumps({'done': True, 'citations': citations})}\n\n"
 
 
 @router.post("/chat")
@@ -80,12 +90,15 @@ async def chat(request: ChatRequest):
     """
     Stream an answer for the given query using SSE.
 
+    Optionally restrict retrieval to a subset of documents via `document_filter`
+    (list of source filenames).  Empty list = search all documents.
+
     Response format (Server-Sent Events):
-      data: {"token": "<partial text>"}   — repeated for each token
-      data: {"done": true, "citations": [...]}  — final event
+      data: {"token": "<partial text>"}          — repeated for each token
+      data: {"done": true, "citations": [...]}   — final event
     """
     return StreamingResponse(
-        _sse_generator(request.query),
+        _sse_generator(request.query, request.document_filter),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

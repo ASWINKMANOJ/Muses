@@ -1,26 +1,30 @@
 /* ─────────────────────────────────────────────────────────────────────────────
    Muses Frontend — app.js
-   Handles: file upload, document listing, SSE chat, citation rendering, toasts
+   Handles: file upload, document listing, document selection (scoped chat),
+            document deletion, SSE chat, citation rendering, toasts
 ───────────────────────────────────────────────────────────────────────────── */
 
 const API = '';  // Same-origin; FastAPI serves this file
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
-const dropZone          = document.getElementById('dropZone');
-const fileInput         = document.getElementById('fileInput');
-const btnUpload         = document.getElementById('btnUpload');
-const uploadProgressList= document.getElementById('uploadProgressList');
-const docsList          = document.getElementById('docsList');
-const docsEmpty         = document.getElementById('docsEmpty');
-const btnRefresh        = document.getElementById('btnRefresh');
-const emptyState        = document.getElementById('emptyState');
-const messages          = document.getElementById('messages');
-const queryInput        = document.getElementById('queryInput');
-const btnSend           = document.getElementById('btnSend');
-const toastContainer    = document.getElementById('toastContainer');
+const dropZone           = document.getElementById('dropZone');
+const fileInput          = document.getElementById('fileInput');
+const btnUpload          = document.getElementById('btnUpload');
+const uploadProgressList = document.getElementById('uploadProgressList');
+const docsList           = document.getElementById('docsList');
+const docsEmpty          = document.getElementById('docsEmpty');
+const docsSelectedBadge  = document.getElementById('docsSelectedBadge');
+const btnRefresh         = document.getElementById('btnRefresh');
+const emptyState         = document.getElementById('emptyState');
+const messages           = document.getElementById('messages');
+const queryInput         = document.getElementById('queryInput');
+const btnSend            = document.getElementById('btnSend');
+const toastContainer     = document.getElementById('toastContainer');
+const filterPill         = document.getElementById('filterPill');
+const filterPillText     = document.getElementById('filterPillText');
 
 // Suggestion chips
-['chip1','chip2','chip3'].forEach(id => {
+['chip1', 'chip2', 'chip3'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('click', () => {
     queryInput.value = el.textContent;
@@ -31,6 +35,49 @@ const toastContainer    = document.getElementById('toastContainer');
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let isStreaming = false;
+/** @type {Set<string>} filenames of currently selected (scoped) documents */
+const selectedDocs = new Set();
+
+// ── Filter pill ───────────────────────────────────────────────────────────────
+function updateFilterPill() {
+  if (selectedDocs.size === 0) {
+    filterPill.className = 'doc-filter-pill all';
+    filterPillText.textContent = 'All Documents';
+    // Remove clear button if present
+    const clr = filterPill.querySelector('.pill-clear');
+    if (clr) clr.remove();
+    docsSelectedBadge.style.display = 'none';
+  } else {
+    filterPill.className = 'doc-filter-pill filtered';
+    const names = [...selectedDocs];
+    const label = names.length === 1
+      ? names[0]
+      : `${names.length} documents`;
+    filterPillText.textContent = `Searching: ${label}`;
+    docsSelectedBadge.textContent = `${names.length} selected`;
+    docsSelectedBadge.style.display = '';
+
+    // Ensure clear button exists
+    if (!filterPill.querySelector('.pill-clear')) {
+      const clr = document.createElement('span');
+      clr.className = 'pill-clear';
+      clr.title = 'Clear selection (search all)';
+      clr.textContent = '✕';
+      clr.addEventListener('click', e => {
+        e.stopPropagation();
+        clearDocumentSelection();
+      });
+      filterPill.appendChild(clr);
+    }
+  }
+}
+
+function clearDocumentSelection() {
+  selectedDocs.clear();
+  // Remove active class from all items
+  docsList.querySelectorAll('.doc-item.active').forEach(el => el.classList.remove('active'));
+  updateFilterPill();
+}
 
 // ── Toasts ───────────────────────────────────────────────────────────────────
 function showToast(message, type = 'info', duration = 3500) {
@@ -84,11 +131,9 @@ fileInput.addEventListener('change', () => {
 async function handleFiles(files) {
   if (!files.length) return;
 
-  // Build FormData
   const formData = new FormData();
   files.forEach(f => formData.append('files', f));
 
-  // Create progress items
   const items = files.map(f => createProgressItem(f.name));
 
   try {
@@ -107,7 +152,8 @@ async function handleFiles(files) {
       const it = items[i];
       if (!it) return;
       if (result.status === 'success') {
-        setItemStatus(it, 'success', `${result.chunks} chunks`);
+        const replaced = result.replaced ? ` · replaced ${result.replaced}` : '';
+        setItemStatus(it, 'success', `${result.chunks} chunks${replaced}`);
         showToast(`"${result.filename}" ingested (${result.chunks} chunks)`, 'success');
       } else {
         setItemStatus(it, 'error', 'Failed');
@@ -115,7 +161,6 @@ async function handleFiles(files) {
       }
     });
 
-    // Refresh document list after short delay
     setTimeout(loadDocuments, 600);
 
   } catch (err) {
@@ -172,18 +217,30 @@ async function loadDocuments() {
 }
 
 function renderDocuments(docs) {
-  // Clear current items (keep empty message in DOM)
+  // Remove old doc items (keep empty placeholder)
   [...docsList.querySelectorAll('.doc-item')].forEach(el => el.remove());
 
   if (!docs.length) {
     docsEmpty.style.display = '';
+    // Clear stale selections
+    selectedDocs.clear();
+    updateFilterPill();
     return;
   }
   docsEmpty.style.display = 'none';
 
+  // Remove any selectedDocs that no longer exist
+  const existing = new Set(docs.map(d => d.filename));
+  for (const name of [...selectedDocs]) {
+    if (!existing.has(name)) selectedDocs.delete(name);
+  }
+  updateFilterPill();
+
   docs.forEach(doc => {
     const el = document.createElement('div');
-    el.className = 'doc-item';
+    el.className = 'doc-item' + (selectedDocs.has(doc.filename) ? ' active' : '');
+    el.dataset.filename = doc.filename;
+
     const ext  = doc.filename.split('.').pop().toUpperCase();
     const name = doc.filename;
     const downloadUrl = `${API}/api/documents/${encodeURIComponent(name)}/download`;
@@ -193,18 +250,87 @@ function renderDocuments(docs) {
         <div class="doc-name" title="${name}">${name}</div>
         <div class="doc-meta">${ext} · ${doc.chunks} chunks</div>
       </div>
-      <a class="btn-download" href="${downloadUrl}" download="${name}"
-         title="Download ${name}" aria-label="Download ${name}">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-             stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="7 10 12 15 17 10"/>
-          <line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-      </a>
+      <div class="doc-actions">
+        <a class="btn-download" href="${downloadUrl}" download="${name}"
+           title="Download ${name}" aria-label="Download ${name}"
+           onclick="event.stopPropagation()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </a>
+        <button class="btn-delete" title="Delete ${name}" aria-label="Delete ${name}"
+                onclick="event.stopPropagation(); deleteDocument('${name}', this.closest('.doc-item'))">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6"/>
+            <path d="M14 11v6"/>
+            <path d="M9 6V4h6v2"/>
+          </svg>
+        </button>
+      </div>
     `;
+
+    // Click on the item row (not on buttons) → toggle selection
+    el.addEventListener('click', () => toggleDocSelection(doc.filename, el));
+
     docsList.appendChild(el);
   });
+}
+
+// ── Document selection ────────────────────────────────────────────────────────
+function toggleDocSelection(filename, el) {
+  if (selectedDocs.has(filename)) {
+    selectedDocs.delete(filename);
+    el.classList.remove('active');
+    showToast(`Deselected: ${filename}`, 'info', 1800);
+  } else {
+    selectedDocs.add(filename);
+    el.classList.add('active');
+    showToast(`Searching: ${filename}`, 'info', 1800);
+  }
+  updateFilterPill();
+}
+
+// ── Document deletion ─────────────────────────────────────────────────────────
+async function deleteDocument(filename, rowEl) {
+  if (!confirm(`Delete "${filename}" from the knowledge base?\nThis cannot be undone.`)) return;
+
+  // Optimistic UI: dim the row
+  rowEl.style.opacity = '0.4';
+  rowEl.style.pointerEvents = 'none';
+
+  try {
+    const res = await fetch(`${API}/api/documents/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+    });
+
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    const data = await res.json();
+
+    // Remove from selection if present
+    selectedDocs.delete(filename);
+    updateFilterPill();
+
+    showToast(`"${filename}" deleted (${data.chunks_removed} chunks removed)`, 'success');
+    rowEl.style.animation = 'fadeOut 0.3s ease forwards';
+    rowEl.addEventListener('animationend', () => {
+      rowEl.remove();
+      // Check if list is now empty
+      if (!docsList.querySelector('.doc-item')) {
+        docsEmpty.style.display = '';
+      }
+    }, { once: true });
+
+  } catch (err) {
+    rowEl.style.opacity = '';
+    rowEl.style.pointerEvents = '';
+    showToast(`Failed to delete "${filename}": ${err.message}`, 'error');
+  }
 }
 
 btnRefresh.addEventListener('click', loadDocuments);
@@ -276,7 +402,10 @@ async function streamAnswer(query) {
     const res = await fetch(`${API}/api/chat`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ query }),
+      body:    JSON.stringify({
+        query,
+        document_filter: [...selectedDocs],   // empty array → all docs
+      }),
     });
 
     if (!res.ok) throw new Error(`Server error ${res.status}`);
@@ -304,7 +433,6 @@ async function streamAnswer(query) {
         try { evt = JSON.parse(raw); } catch { continue; }
 
         if (evt.token !== undefined) {
-          // Remove typing indicator on first token
           if (!typingRemoved) {
             bubble.innerHTML = '';
             typingRemoved = true;
@@ -315,7 +443,6 @@ async function streamAnswer(query) {
         }
 
         if (evt.done) {
-          // Render citations
           if (evt.citations && evt.citations.length > 0) {
             const citEl = buildCitationsCard(evt.citations);
             msgEl.appendChild(citEl);
@@ -402,7 +529,7 @@ function escapeHtml(str) {
 
 /**
  * Minimal markdown-like renderer for the AI response:
- * - **bold**, *italic*, `code`, bullet lists
+ * - **bold**, *italic*, `code`, bullet lists, headings
  */
 function formatResponse(text) {
   const escaped = escapeHtml(text);
@@ -423,5 +550,11 @@ function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
 }
 
+// Add fadeOut keyframe dynamically (used for deleted doc rows)
+const style = document.createElement('style');
+style.textContent = `@keyframes fadeOut { to { opacity: 0; transform: translateX(-10px); height: 0; padding: 0; margin: 0; overflow: hidden; } }`;
+document.head.appendChild(style);
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 loadDocuments();
+updateFilterPill();

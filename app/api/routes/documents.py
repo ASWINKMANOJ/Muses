@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from app.retrieval.vector_store import collection
+from app.retrieval.vector_store import collection, delete_document_chunks
 
 router = APIRouter()
 
@@ -23,13 +23,12 @@ MIME_MAP = {
 async def list_documents():
     """
     Return a list of all unique source documents currently in the vector store.
+    Each entry includes the filename and its chunk count.
     """
     try:
-        # Fetch all metadata from ChromaDB
         result = collection.get(include=["metadatas"])
         metadatas = result.get("metadatas", [])
 
-        # Aggregate chunk counts per source file
         doc_stats: dict[str, int] = {}
         for meta in metadatas:
             source = meta.get("source", "unknown")
@@ -49,9 +48,8 @@ async def list_documents():
 async def download_document(filename: str):
     """
     Download an uploaded source document by filename.
-    The filename must match the original uploaded name (path traversal is blocked).
+    Path traversal is blocked by stripping directory components.
     """
-    # Sanitise: strip any directory component
     safe_name = Path(filename).name
     file_path = UPLOADS_DIR / safe_name
 
@@ -69,3 +67,42 @@ async def download_document(filename: str):
         media_type=media_type,
         filename=safe_name,
     )
+
+
+@router.delete("/documents/{filename}")
+async def delete_document(filename: str):
+    """
+    Permanently delete a document:
+    1. Remove all its chunks from the vector store.
+    2. Delete the source file from the uploads directory.
+
+    Returns the number of chunks removed and whether the file was deleted.
+    """
+    safe_name = Path(filename).name
+
+    # 1. Remove chunks from ChromaDB
+    try:
+        deleted_chunks = delete_document_chunks(safe_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove chunks for '{safe_name}': {e}",
+        )
+
+    # 2. Remove file from disk (best-effort — not an error if missing)
+    file_path = UPLOADS_DIR / safe_name
+    file_deleted = False
+    if file_path.exists():
+        try:
+            file_path.unlink()
+            file_deleted = True
+        except Exception as e:
+            # Log but don't fail the request
+            print(f"[documents] Warning: could not delete file '{safe_name}': {e}")
+
+    return {
+        "status": "deleted",
+        "filename": safe_name,
+        "chunks_removed": deleted_chunks,
+        "file_deleted": file_deleted,
+    }
