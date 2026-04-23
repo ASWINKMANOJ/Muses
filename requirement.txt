@@ -1,7 +1,9 @@
 # Core
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
+python-multipart
+aiofiles
 
 # Document parsing
 pymupdf

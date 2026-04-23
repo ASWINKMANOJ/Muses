@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+import argparse
 
 
 # ── Colour helpers (no external deps) ────────────────────────────────────────
@@ -117,12 +118,44 @@ def prompt_and_ingest() -> bool:
 
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 def main():
+    parser = argparse.ArgumentParser(description="Muses Document Q&A")
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the FastAPI server instead of the interactive CLI",
+    )
+    parser.add_argument(
+        "--host", default="0.0.0.0",
+        help="Host for the FastAPI server (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=8000,
+        help="Port for the FastAPI server (default: 8000)",
+    )
+    parser.add_argument(
+        "file", nargs="?",
+        help="Optional document path to ingest before starting the CLI",
+    )
+    args = parser.parse_args()
+
+    # ── API server mode ───────────────────────────────────────────────────────
+    if args.serve:
+        import uvicorn
+        print(c("\n  ● Starting Muses API server…\n", CYAN, BOLD))
+        print(c(f"  → http://{args.host}:{args.port}\n", DIM))
+        uvicorn.run(
+            "app.api.server:app",
+            host=args.host,
+            port=args.port,
+            reload=True,
+        )
+        return
+
+    # ── Interactive CLI mode ──────────────────────────────────────────────────
     banner()
 
-    # ── Optional: accept a file path as a CLI argument ────────────────────────
-    # Usage: python main.py "C:/path/to/doc.pdf"
-    if len(sys.argv) > 1:
-        file_path = resolve_path(sys.argv[1])
+    if args.file:
+        file_path = resolve_path(args.file)
         success = ingest_document(file_path)
         if not success:
             sys.exit(1)
