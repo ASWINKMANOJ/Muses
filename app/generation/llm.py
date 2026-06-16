@@ -12,26 +12,16 @@ def stream_answer(query: str, context_chunks: list[str]):
     context = "\n\n".join(context_chunks)
 
     prompt = f"""
-You are an AI assistant answering STRICTLY from the provided context.
+You are a helpful assistant that answers questions using the provided context from embedded documents.
 
-IMPORTANT RULES:
-- Use ONLY the given context
-- Do NOT use outside knowledge
-- Do NOT show thinking or reasoning steps
-- Be concise and structured
-- If the context is empty or the context is not relevant to the query, say: "Not found in provided documents"
-
-RESPONSE FORMAT (STRICT):
-
-Answer:
-- Point 1
-- Point 2
-- Point 3
-- And so on...
-
-Citations:
-- [Source: <filename>, Page: <page>, Section: <heading>]
-- [Source: <filename>, Page: <page>, Section: <heading>]
+RULES:
+- The context below is your PRIMARY source of truth — always base your answer on it.
+- If the context directly answers the question, use it. Cite the source at the end.
+- If you have general knowledge that helps clarify or explain something mentioned in the context, add a brief and simple explanation — but keep it grounded in what the context says.
+- Do NOT invent facts or details that are not in the context.
+- Do NOT show your reasoning or thinking steps.
+- Keep responses concise. Use plain prose for simple questions; use a short list only when the answer has clearly multiple distinct points.
+- If the context is completely unrelated to the question or empty, reply: "I couldn't find anything relevant in the provided documents."
 
 ---
 
