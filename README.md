@@ -1,276 +1,311 @@
-# Muses — Multimodal RAG
+# Muses — Legal-Optimized Multimodal RAG System
 
-A **Retrieval-Augmented Generation** system that lets you upload documents, chat with them via a streaming web UI, and download cited sources. Powered by a local LLM through [Ollama](https://ollama.ai), ChromaDB, and FastAPI.
+**Muses** is an advanced Retrieval-Augmented Generation (RAG) system specifically optimized for ingesting legal documents (contracts, statutes, legal briefs, court judgments) and querying them for fast, precise, and cited responses.
 
----
-
-## Features
-
-- **Multimodal ingestion** — PDF (with OCR), DOCX, TXT, PNG, JPG
-- **Semantic search** — `all-MiniLM-L6-v2` embeddings + ChromaDB vector store with custom reranking
-- **Streaming answers** — real-time token streaming via Server-Sent Events (SSE)
-- **Source citations** — every answer links back to the exact document, page, and section
-- **Web UI** — dark glassmorphism interface; drag-and-drop upload, live chat, one-click download
-- **REST API** — FastAPI with auto-generated Swagger docs (`/docs`)
-- **CLI mode** — original interactive terminal interface still fully supported
-- **GPU acceleration** — CUDA-accelerated embeddings and Ollama inference
+It combines **Dense Semantic Search (Legal-BERT)** with **Sparse Keyword Search (BM25)** via **Reciprocal Rank Fusion (RRF)**, **Hypothetical Document Embeddings (HyDE)**, and a local streaming LLM via **Ollama**.
 
 ---
 
-## Architecture
+## 🌟 Key Features
 
-```
-Browser (frontend/)
-    │
-    ├─ POST /api/ingest                      Upload & ingest files
-    ├─ POST /api/chat                        SSE streaming chat
-    ├─ GET  /api/documents                   List ingested documents
-    └─ GET  /api/documents/{file}/download   Download a cited file
-            │
-       FastAPI  (app/api/server.py)
-            │
-    ┌───────┴────────┐
-    │                │
-ingest_pipeline   query_pipeline
-    │                │
- Loaders          query_similar → rerank → stream_answer
- (PDF/DOCX/       (ChromaDB)              (Ollama HTTP)
-  TXT/Image)
-    │
- Chunker → Embedder (sentence-transformers) → ChromaDB
-```
-
-**Ingestion pipeline:** File → Parse → Chunk → Embed → Store in ChromaDB
-
-**Query pipeline:** Query → Embed → ChromaDB search → Rerank → Ollama LLM → Stream tokens
+- **Legal-Optimized Embeddings**: Uses `nlpaueb/legal-bert-base-uncased` fine-tuned on legal corpora for accurate semantic understanding.
+- **Hybrid Retrieval (Dense + BM25)**: Fuses vector search (ChromaDB) and exact term matching (BM25) using Reciprocal Rank Fusion (RRF) to pinpoint exact legal clauses and section numbers.
+- **Legal-Aware Chunking**: Preserves full clauses, sub-clauses, and structural boundaries (e.g., `Section 4.2`, `WHEREAS`, `Schedule A`) rather than cutting text mid-sentence.
+- **Enhanced Document Parsing**:
+  - **PDF**: Automatic detection of numbered legal headings, table extraction via `pdfplumber`, and Tesseract OCR fallback for scanned PDFs.
+  - **DOCX / TXT / Images**: Multimodal support with Gemma 3 vision & OCR capabilities.
+- **HyDE (Hypothetical Document Embedding)**: Generates hypothetical legal provisions to bridge the vocabulary gap between user questions and formal contract phrasing.
+- **Async & Non-Blocking Ingestion**: Background document processing with task status polling (`202 Accepted`).
+- **Verbatim Citations & Legal System Prompt**: Instructs the LLM to cite document sources, pages, and clause numbers, quote key passages verbatim, and append mandatory legal disclaimers.
+- **SHA256 Deduplication**: Prevents duplicate uploads and re-indexing of identical legal documents.
+- **Centralized Configuration**: All parameters fully configurable via environment variables (`.env`).
+- **Web UI & REST API**: Dark glassmorphic user interface + FastAPI backend with OpenAPI Swagger documentation.
 
 ---
 
-## Project Structure
+## 🏗️ Architecture Overview
 
 ```
-Muses/
-├── app/
-│   ├── api/
-│   │   ├── server.py           # FastAPI app (CORS, routing, static files)
-│   │   └── routes/
-│   │       ├── ingest.py       # POST /api/ingest
-│   │       ├── chat.py         # POST /api/chat  (SSE)
-│   │       └── documents.py    # GET  /api/documents + /download
-│   ├── embedding/
-│   │   └── embedder.py         # sentence-transformers model
-│   ├── generation/
-│   │   └── llm.py              # Ollama streaming client
-│   ├── ingestion/
-│   │   ├── loaders/            # pdf_parser, docx_parser, text_parser, image_parser
-│   │   └── chunking/           # chunker.py
-│   ├── pipeline/
-│   │   ├── ingest_pipeline.py  # Orchestrates ingestion steps
-│   │   └── query_pipeline.py   # Orchestrates query + generation
-│   └── retrieval/
-│       └── vector_store.py     # ChromaDB client + reranker
-├── frontend/
-│   ├── index.html              # Single-page UI
-│   ├── style.css               # Dark glassmorphism design
-│   └── app.js                  # Upload, SSE chat, citations
-├── db/                         # ChromaDB persistent storage (auto-created)
-├── uploads/                    # Uploaded files for download (auto-created)
-├── main.py                     # CLI + --serve entrypoint
-└── requirement.txt
+                          ┌──────────────────────────┐
+                          │   Browser / Client UI    │
+                          └────────────┬─────────────┘
+                                       │
+                      ┌────────────────┴────────────────┐
+                      │  FastAPI Server (server.py)     │
+                      └────────────────┬────────────────┘
+                                       │
+            ┌──────────────────────────┴──────────────────────────┐
+            ▼                                                     ▼
+  Ingestion Pipeline                                     Query Pipeline
+ ┌──────────────────────┐                               ┌──────────────────────┐
+ │ File Upload & Hash   │                               │ User Question        │
+ ├──────────────────────┤                               ├──────────────────────┤
+ │ Parsers (PDF/DOCX)   │                               │ HyDE Query Expansion │
+ ├──────────────────────┤                               ├──────────────────────┤
+ │ Legal-Aware Chunker  │                               │ Hybrid Search (RRF)  │
+ ├──────────────────────┤                               │ ┌──────────────────┐ │
+ │ Embedder (Legal-BERT)│                               │ │ Dense (ChromaDB) │ │
+ ├──────────────────────┤                               │ ├──────────────────┤ │
+ │ Vector Store & BM25  │                               │ │ Sparse (BM25)    │ │
+ └──────────────────────┘                               │ └──────────────────┘ │
+                                                        ├──────────────────────┤
+                                                        │ LLM Token Stream     │
+                                                        │ (Ollama / Gemma 3)   │
+                                                        └──────────────────────┘
 ```
 
 ---
 
-## Requirements
+## 📋 System Requirements
 
-### System
-
-| Requirement | Notes |
+| Component | Minimum / Recommended |
 |---|---|
-| Python 3.10+ | 3.14 tested |
-| Ollama | Must be running — see below |
-| Tesseract OCR | Required for image/scanned PDF ingestion |
-| CUDA 11.8+ | Optional but recommended for GPU acceleration |
+| **OS** | Linux (Ubuntu/Arch), macOS, or Windows (WSL2 recommended) |
+| **Python** | Python 3.10 to 3.12 (Python 3.11+ recommended) |
+| **Ollama** | Must be installed & running locally |
+| **System Dependencies** | `tesseract-ocr` (required for scanned document / image OCR) |
+| **GPU Acceleration** | NVIDIA GPU with CUDA 11.8+ (Optional, highly recommended for faster embeddings & inference) |
 
-### Install Tesseract (Arch Linux)
+---
 
+## 🚀 Setup & Installation Guide
+
+Follow these steps to set up and run Muses on any system.
+
+### Step 1: Install System Dependencies
+
+#### **Linux (Arch Linux)**
 ```bash
 sudo pacman -S tesseract tesseract-data-eng
 ```
 
----
-
-## Installation
-
-### 1. Create a virtual environment
-
+#### **Linux (Ubuntu / Debian)**
 ```bash
-python -m venv venv
-
-# bash/zsh
-source venv/bin/activate
-
-# fish
-source venv/bin/activate.fish
+sudo apt update
+sudo apt install -y tesseract-ocr tesseract-ocr-eng
 ```
 
-### 2. Install Python dependencies
+#### **macOS (via Homebrew)**
+```bash
+brew install tesseract
+```
+
+---
+
+### Step 2: Install & Start Ollama
+
+Muses relies on **Ollama** for running local LLMs (e.g., `gemma3:4b` or `llama3`).
+
+1. **Install Ollama**:
+   - **Linux / macOS**:
+     ```bash
+     curl -fsSL https://ollama.ai/install.sh | sh
+     ```
+   - **Windows**: Download installer from [ollama.ai](https://ollama.ai).
+
+2. **Pull the Required Model**:
+   ```bash
+   ollama pull gemma3:4b
+   ```
+
+3. **Start the Ollama Service**:
+   ```bash
+   ollama serve
+   ```
+   *(Keep this running in a separate terminal window, or start it via systemd: `sudo systemctl enable --now ollama`)*
+
+---
+
+### Step 3: Clone Repository & Create Virtual Environment
 
 ```bash
+# Clone the repository
+git clone https://github.com/ASWINKMANOJ/Muses.git
+cd Muses
+
+# Create a virtual environment
+python3 -m venv venv
+
+# Activate the virtual environment
+# On Linux / macOS (bash/zsh):
+source venv/bin/activate
+
+# On Linux / macOS (fish shell):
+source venv/bin/activate.fish
+
+# On Windows (Command Prompt):
+venv\Scripts\activate.bat
+
+# On Windows (PowerShell):
+venv\Scripts\Activate.ps1
+```
+
+---
+
+### Step 4: Install Python Dependencies
+
+```bash
+pip install --upgrade pip
 pip install -r requirement.txt
 ```
 
-### 3. Install and start Ollama
-
-> **Yes — you must run `ollama serve` before starting Muses.**
->
-> Muses sends HTTP requests to `http://localhost:11434` to stream LLM responses.
-> If Ollama is not running, chat queries will fail with a connection error.
-
+*(Optional: For PyTorch CUDA support on Linux/Windows, install PyTorch with CUDA explicitly)*:
 ```bash
-# Install Ollama (Arch)
-sudo pacman -S ollama
-# or via the install script:
-curl -fsSL https://ollama.ai/install.sh | sh
-
-# Pull the default model
-ollama pull gemma3:4b
-
-# Start the Ollama server (keep this running in a separate terminal)
-ollama serve
-```
-
-On most Linux systems Ollama can also be started as a systemd service:
-
-```bash
-sudo systemctl enable --now ollama
+pip install torch --index-url https://download.pytorch.org/whl/cu118
 ```
 
 ---
 
-## Usage
+### Step 5: Environment Configuration
 
-### Start the Web UI + API server
+Copy the sample environment file to `.env`:
 
 ```bash
-# Activate your venv first, then:
+cp .env.example .env
+```
+
+You can customize options in `.env`:
+
+```ini
+# LLM (Ollama) Settings
+OLLAMA_URL=http://localhost:11434/api/generate
+LLM_MODEL=gemma3:4b
+LLM_TEMPERATURE=0.1
+LLM_NUM_CTX=4096
+
+# Embedding Model (Default: Legal-BERT)
+EMBEDDING_MODEL=nlpaueb/legal-bert-base-uncased
+EMBEDDING_BATCH_SIZE=32
+
+# Retrieval & Hybrid Search
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=150
+RETRIEVAL_TOP_K=5
+BM25_WEIGHT=0.5
+HYDE_ENABLED=true
+
+# Storage Paths
+CHROMA_DB_PATH=db
+UPLOADS_DIR=uploads
+```
+
+---
+
+## 🏃 Running the Application
+
+### Option A: Web UI & Server Mode (Recommended)
+
+Start the FastAPI application server:
+
+```bash
 python main.py --serve
-
-# Custom host/port
-python main.py --serve --host 127.0.0.1 --port 8080
 ```
 
-Open **http://localhost:8000** in your browser.
+With custom host and port:
+```bash
+python main.py --serve --host 127.0.0.1 --port 8000
+```
 
-- Drag & drop or choose files to upload
-- Watch per-file ingestion progress
-- Ask questions — answers stream in real time
-- Click **↓** on any citation to download the source document
-
-API docs (Swagger UI): **http://localhost:8000/docs**
+- **Web Dashboard**: Open [http://localhost:8000](http://localhost:8000) in your web browser.
+- **Interactive API Docs (Swagger UI)**: Access [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ---
 
-### CLI mode (original interface)
+### Option B: Interactive CLI Mode
+
+Run Muses directly inside your terminal:
 
 ```bash
-python main.py                     # interactive: prompts for a file then starts Q&A
-python main.py path/to/doc.pdf     # ingest a file then start Q&A
+# Interactive mode (prompts for document path)
+python main.py
+
+# Specify document at startup
+python main.py /path/to/contract.pdf
 ```
 
 ---
 
-## API Reference
+## 🛠️ API Reference
+
+Muses provides a RESTful API for document ingestion, querying, and document retrieval.
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/ingest` | Upload one or more files (`multipart/form-data`, field name `files`) |
-| `POST` | `/api/chat` | Stream a chat response (`{"query": "..."}`) via SSE |
-| `GET`  | `/api/documents` | List all ingested documents and chunk counts |
-| `GET`  | `/api/documents/{filename}/download` | Download an uploaded source file |
+|---|---|---|
+| `POST` | `/api/ingest` | Upload file(s) for asynchronous ingestion (`multipart/form-data`) |
+| `GET` | `/api/ingest/{task_id}/status` | Check status and progress of an ingestion task |
+| `POST` | `/api/chat` | Stream an answer for a query via Server-Sent Events (SSE) |
+| `GET` | `/api/documents` | List all ingested documents, page count, and chunk stats |
+| `GET` | `/api/documents/{filename}/download` | Download an uploaded document |
+| `DELETE` | `/api/documents/{filename}` | Delete a document and purge its vector/BM25 embeddings |
 
-### SSE chat event format
+---
 
-```
-data: {"token": "<partial text>"}   ← repeated for every token
-data: {"done": true, "citations": [{"source": "...", "page": 1, "heading": "..."}]}
-```
+### API Usage Examples
 
-### Ingest a file with curl
-
+#### 1. Ingest a Legal Document (cURL)
 ```bash
 curl -X POST http://localhost:8000/api/ingest \
-  -F "files=@/path/to/document.pdf"
+  -F "files=@/path/to/contract.pdf"
+```
+**Response:**
+```json
+{
+  "tasks": [
+    {
+      "task_id": "8f3b2d10-4c11-4f90-a612-c2149b10a202",
+      "filename": "contract.pdf",
+      "status": "queued"
+    }
+  ]
+}
 ```
 
-### Ask a question with curl (streaming)
+#### 2. Check Ingestion Task Status
+```bash
+curl http://localhost:8000/api/ingest/8f3b2d10-4c11-4f90-a612-c2149b10a202/status
+```
 
+#### 3. Query via SSE Stream (cURL)
 ```bash
 curl -N -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"query": "What are the key findings?"}'
+  -d '{
+    "query": "What is the liability cap under Section 4?",
+    "document_filter": ["contract.pdf"]
+  }'
 ```
 
 ---
 
-## Configuration
+## 🧪 Testing & Verification
 
-The following can be changed directly in source (`.env` support can be added):
-
-| Setting | Location | Default |
-|---|---|---|
-| LLM model | `app/generation/llm.py` | `gemma3:4b` |
-| Ollama URL | `app/generation/llm.py` | `http://localhost:11434` |
-| Embedding model | `app/embedding/embedder.py` | `all-MiniLM-L6-v2` |
-| ChromaDB path | `app/retrieval/vector_store.py` | `db/` |
-| Uploads directory | `app/api/routes/ingest.py` | `uploads/` |
-| Top-k retrieval | `app/pipeline/query_pipeline.py` | `3` |
-
----
-
-## Troubleshooting
-
-| Issue | Fix |
-|---|---|
-| **Chat returns connection error** | Run `ollama serve` (or `systemctl start ollama`) before starting Muses |
-| **Model not found** | Run `ollama pull gemma3:4b` |
-| **OCR not working** | Install Tesseract: `sudo pacman -S tesseract tesseract-data-eng` |
-| **CUDA not detected** | Verify `torch.cuda.is_available()` and CUDA/driver versions match |
-| **ChromaDB errors** | Do not delete the `db/` directory while the server is running |
-| **`externally-managed-environment` pip error** | Use a venv (`python -m venv venv && source venv/bin/activate`) |
-
----
-
-## Performance Tips
-
-1. **GPU** — Ensure CUDA is configured for faster embeddings and LLM inference
-2. **Model size** — `gemma3:4b` is lightweight; swap to `gemma3:12b` or `llama3` for higher quality if VRAM allows
-3. **Context window** — Default `num_ctx: 4096` is tuned for 4 GB VRAM; increase for longer documents
-4. **Batch uploads** — Upload multiple files at once; the API ingests them in sequence per file
-
----
-
-## Development
-
-### Verify setup
+Run diagnostic scripts to verify system setup and component integration:
 
 ```bash
+# Run environment setup check
 python test_setup.py
-```
 
-Checks: PyTorch/CUDA, embedding model, ChromaDB connectivity, Ollama availability.
-
-### Run individual tests
-
-```bash
-python test_embedder.py
+# Run component-specific tests
 python test_parser.py
+python test_embedder.py
 python test_retrieval.py
 python test_rag.py
 ```
 
 ---
 
-## License
+## ❓ Troubleshooting
 
-[Add your license here]
+| Issue | Cause & Solution |
+|---|---|
+| **`ConnectionError: Cannot connect to Ollama`** | Ollama is not running. Run `ollama serve` in a terminal window. |
+| **`Model 'gemma3:4b' not found`** | Pull the model first by running `ollama pull gemma3:4b`. |
+| **`ModuleNotFoundError: No module named '...'`** | Ensure your virtual environment is activated (`source venv/bin/activate`). |
+| **`TesseractNotFoundError`** | Install Tesseract OCR on your system (see Step 1). |
+| **ChromaDB / Embedding mismatch after config change** | If you change `EMBEDDING_MODEL` in `.env`, purge the database: `rm -rf db/ uploads/manifest.json`. |
+
+---
+
+## 📜 License
+
+[MIT License](LICENSE)

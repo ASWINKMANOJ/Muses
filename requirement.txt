@@ -1,29 +1,38 @@
-# Core
+# ── Core ──────────────────────────────────────────────────────────────────────
 fastapi
 uvicorn[standard]
 python-dotenv
 python-multipart
 aiofiles
 
-# Document parsing
-pymupdf
-pdfplumber
-pytesseract
+# ── Settings ──────────────────────────────────────────────────────────────────
+pydantic-settings
+
+# ── Document parsing ──────────────────────────────────────────────────────────
+pymupdf          # fitz — fast PDF text extraction
+pdfplumber       # table extraction from PDFs
+pytesseract      # OCR fallback for scanned PDFs
 Pillow
 
-# Chunking
+# ── Chunking ──────────────────────────────────────────────────────────────────
 langchain
 langchain-community
+langchain-text-splitters
 
-# Embedding
+# ── Embedding ─────────────────────────────────────────────────────────────────
 sentence-transformers
 transformers
-torch  # we'll install this separately for CUDA
+torch           # install separately with CUDA if available: pip install torch --index-url https://download.pytorch.org/whl/cu118
 
-# Vector DB
+# ── Vector DB ─────────────────────────────────────────────────────────────────
 chromadb
 
-# LLM interface
+# ── Sparse retrieval (BM25) ───────────────────────────────────────────────────
+rank-bm25
+
+# ── LLM interface ─────────────────────────────────────────────────────────────
 ollama
 requests
+
+# ── Document loaders ──────────────────────────────────────────────────────────
 python-docx
