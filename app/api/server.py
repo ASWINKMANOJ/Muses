@@ -17,12 +17,13 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes.ingest import router as ingest_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.eval import router as eval_router
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Muses RAG API",
-    description="Multimodal RAG — upload, chat, and download cited documents.",
-    version="1.0.0",
+    description="Multimodal RAG — upload, chat, download cited documents, and evaluate performance.",
+    version="1.1.0",
 )
 
 # ── CORS (open for local dev) ─────────────────────────────────────────────────
@@ -38,6 +39,7 @@ app.add_middleware(
 app.include_router(ingest_router,    prefix="/api", tags=["Ingest"])
 app.include_router(chat_router,      prefix="/api", tags=["Chat"])
 app.include_router(documents_router, prefix="/api", tags=["Documents"])
+app.include_router(eval_router,      prefix="/api", tags=["Evaluation & Cache"])
 
 # ── Serve frontend static files ───────────────────────────────────────────────
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"

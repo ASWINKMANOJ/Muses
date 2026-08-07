@@ -1,0 +1,18 @@
+{
+  "timestamp": "2026-08-07 19:25:29",
+  "total_test_queries": 3,
+  "top_k": 5,
+  "metrics": {
+    "hit_rate_at_k": 0.0,
+    "mrr": 0.0,
+    "avg_retrieval_score": 0.0159,
+    "avg_latency_ms": 1628.64
+  },
+  "configuration": {
+    "embedding_model": "nlpaueb/legal-bert-base-uncased",
+    "cross_encoder_enabled": false,
+    "cross_encoder_model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "hyde_enabled": true,
+    "bm25_weight": 0.5
+  }
+}

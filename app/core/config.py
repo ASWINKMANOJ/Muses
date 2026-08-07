@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     llm_num_gpu: int = 99   # Offload LLM layers to GPU VRAM
 
     # ── Embedding Model (CPU to save VRAM for Ollama) ─────────────────────────
-    embedding_model: str = "nlpaueb/legal-bert-base-uncased"
+    # Use a trained bi-encoder (BGE), not an MLM like Legal-BERT.
+    # Changing this requires re-ingesting docs into a fresh collection.
+    embedding_model: str = "BAAI/bge-base-en-v1.5"
     embedding_device: str = "cpu"  # 'cpu' prevents CUDA OOM with Ollama
     embedding_batch_size: int = 32
     embedding_normalize: bool = True
@@ -36,17 +38,28 @@ class Settings(BaseSettings):
     chunk_size: int = 1000
     chunk_overlap: int = 150
 
-    # ── Retrieval ─────────────────────────────────────────────────────────────
+    # ── Retrieval & Reranking ───────────────────────────────────────────────────
     retrieval_n_candidates: int = 20
     retrieval_top_k: int = 5
     bm25_weight: float = 0.5
     hyde_enabled: bool = True
-    cross_encoder_enabled: bool = False
+    cross_encoder_enabled: bool = True
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    crag_min_confidence: float = -5.0  # Minimum rerank logit threshold for CRAG check
+
+    # ── Semantic Cache ────────────────────────────────────────────────────────
+    semantic_cache_enabled: bool = True
+    semantic_cache_threshold: float = 0.92
+    semantic_cache_max_size: int = 200
+
+    # ── Evaluation ────────────────────────────────────────────────────────────
+    eval_dataset_path: str = "tests/eval_dataset.json"
+    eval_report_path: str = "eval_report.json"
 
     # ── Vector DB ─────────────────────────────────────────────────────────────
     chroma_db_path: str = "db"
-    chroma_collection: str = "documents"
+    # Bumped when switching to BGE so old Legal-BERT vectors are not mixed in.
+    chroma_collection: str = "documents_bge_base"
 
     # ── Paths ─────────────────────────────────────────────────────────────────
     uploads_dir: str = "uploads"

@@ -1,271 +1,257 @@
-# Muses — Legal-Optimized Multimodal RAG System
+# Muses
 
-**Muses** is an advanced Retrieval-Augmented Generation (RAG) system specifically optimized for ingesting legal documents (contracts, statutes, legal briefs, court judgments) and querying them for fast, precise, and cited responses.
-
-It combines **Dense Semantic Search (Legal-BERT)** with **Sparse Keyword Search (BM25)** via **Reciprocal Rank Fusion (RRF)**, **Hypothetical Document Embeddings (HyDE)**, and a local streaming LLM via **Ollama**.
+**Muses** is a local, legal-oriented multimodal RAG (Retrieval-Augmented Generation) system. Upload contracts, statutes, briefs, or scanned pages; ask questions in natural language; get streamed answers with document/page/clause citations — all running on your machine via Ollama.
 
 ---
 
-## 🌟 Key Features
+## Features
 
-- **Legal-Optimized Embeddings**: Uses `nlpaueb/legal-bert-base-uncased` fine-tuned on legal corpora for accurate semantic understanding.
-- **Hybrid Retrieval (Dense + BM25)**: Fuses vector search (ChromaDB) and exact term matching (BM25) using Reciprocal Rank Fusion (RRF) to pinpoint exact legal clauses and section numbers.
-- **Legal-Aware Chunking**: Preserves full clauses, sub-clauses, and structural boundaries (e.g., `Section 4.2`, `WHEREAS`, `Schedule A`) rather than cutting text mid-sentence.
-- **Enhanced Document Parsing**:
-  - **PDF**: Automatic detection of numbered legal headings, table extraction via `pdfplumber`, and Tesseract OCR fallback for scanned PDFs.
-  - **DOCX / TXT / Images**: Multimodal support with Gemma 3 vision & OCR capabilities.
-- **HyDE (Hypothetical Document Embedding)**: Generates hypothetical legal provisions to bridge the vocabulary gap between user questions and formal contract phrasing.
-- **Async & Non-Blocking Ingestion**: Background document processing with task status polling (`202 Accepted`).
-- **Verbatim Citations & Legal System Prompt**: Instructs the LLM to cite document sources, pages, and clause numbers, quote key passages verbatim, and append mandatory legal disclaimers.
-- **SHA256 Deduplication**: Prevents duplicate uploads and re-indexing of identical legal documents.
-- **Centralized Configuration**: All parameters fully configurable via environment variables (`.env`).
-- **Web UI & REST API**: Dark glassmorphic user interface + FastAPI backend with OpenAPI Swagger documentation.
+| Area | What you get |
+|------|----------------|
+| **Hybrid retrieval** | Dense vectors (ChromaDB) + sparse BM25, fused with Reciprocal Rank Fusion (RRF) |
+| **Embeddings** | `BAAI/bge-base-en-v1.5` bi-encoder (CPU by default so GPU stays free for the LLM) |
+| **Reranking** | Optional cross-encoder (`ms-marco-MiniLM-L-6-v2`) for top-k precision |
+| **HyDE** | Optional hypothetical-answer expansion to bridge user wording and legal prose |
+| **CRAG guardrail** | On low rerank confidence: corrective re-retrieve, then refuse instead of guessing |
+| **Semantic cache** | Near-duplicate questions reuse answers; scoped by `document_filter` |
+| **Legal-aware chunking** | Prefers clause/section boundaries (`Article`, `Section`, `WHEREAS`, numbered clauses) |
+| **Multimodal ingest** | PDF (text + tables + OCR), DOCX, TXT, PNG/JPG (vision OCR via Ollama / Tesseract) |
+| **Dedup & upsert** | SHA256 manifest skip for identical bytes; same filename replaces old chunks |
+| **Citations** | System prompt requires inline `[Doc / Page / Section]` cites, verbatim quotes, disclaimer |
+| **Eval & cache APIs** | Benchmark Hit@K / MRR; inspect or clear the query cache |
+| **UI + API** | Static web frontend + FastAPI (Swagger at `/docs`) + interactive CLI |
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture
 
 ```
-                          ┌──────────────────────────┐
-                          │   Browser / Client UI    │
-                          └────────────┬─────────────┘
-                                       │
-                      ┌────────────────┴────────────────┐
-                      │  FastAPI Server (server.py)     │
-                      └────────────────┬────────────────┘
-                                       │
-            ┌──────────────────────────┴──────────────────────────┐
-            ▼                                                     ▼
-  Ingestion Pipeline                                     Query Pipeline
- ┌──────────────────────┐                               ┌──────────────────────┐
- │ File Upload & Hash   │                               │ User Question        │
- ├──────────────────────┤                               ├──────────────────────┤
- │ Parsers (PDF/DOCX)   │                               │ HyDE Query Expansion │
- ├──────────────────────┤                               ├──────────────────────┤
- │ Legal-Aware Chunker  │                               │ Hybrid Search (RRF)  │
- ├──────────────────────┤                               │ ┌──────────────────┐ │
- │ Embedder (Legal-BERT)│                               │ │ Dense (ChromaDB) │ │
- ├──────────────────────┤                               │ ├──────────────────┤ │
- │ Vector Store & BM25  │                               │ │ Sparse (BM25)    │ │
- └──────────────────────┘                               │ └──────────────────┘ │
-                                                        ├──────────────────────┤
-                                                        │ LLM Token Stream     │
-                                                        │ (Ollama / Gemma 3)   │
-                                                        └──────────────────────┘
+Browser / CLI / curl
+        │
+        ▼
+┌───────────────────────────────────────────────┐
+│  FastAPI  (python main.py --serve)            │
+│  /api/ingest  /api/chat  /api/documents       │
+│  /api/eval/*  /api/cache/*                    │
+└───────────────────┬───────────────────────────┘
+                    │
+     ┌──────────────┴──────────────┐
+     ▼                             ▼
+ Ingest pipeline              Query pipeline
+ Parse → Chunk → Embed        Cache? → HyDE? → Hybrid RRF
+      → Chroma + BM25         → Cross-encoder → CRAG
+                              → Stream Ollama answer → Cache
 ```
 
----
-
-## 📋 System Requirements
-
-| Component | Minimum / Recommended |
-|---|---|
-| **OS** | Linux (Ubuntu/Arch), macOS, or Windows (WSL2 recommended) |
-| **Python** | Python 3.10 to 3.12 (Python 3.11+ recommended) |
-| **Ollama** | Must be installed & running locally |
-| **System Dependencies** | `tesseract-ocr` (required for scanned document / image OCR) |
-| **GPU Acceleration** | NVIDIA GPU with CUDA 11.8+ (Optional, highly recommended for faster embeddings & inference) |
+**Supported uploads:** `.pdf` `.docx` `.txt` `.png` `.jpg` `.jpeg` (max 100 MB per file via API)
 
 ---
 
-## 🚀 Setup & Installation Guide
+## Requirements
 
-Follow these steps to set up and run Muses on any system.
+| Component | Notes |
+|-----------|--------|
+| **OS** | Linux, macOS, or Windows (WSL2 recommended on Windows) |
+| **Python** | 3.10–3.12 recommended (3.11 is a safe default) |
+| **Ollama** | Installed and running; model pulled (default `gemma3:4b`) |
+| **Tesseract OCR** | Needed for scanned PDFs / image fallback |
+| **RAM** | **16 GB comfortable.** 8 GB works with the low-memory profile below |
+| **GPU** | Optional. NVIDIA GPU with ~4 GB+ VRAM can run `gemma3:4b` in Ollama. Embeddings stay on CPU by default |
 
-### Step 1: Install System Dependencies
+### Low-end laptop (example: 8 GB RAM + RTX 2050 4 GB)
 
-#### **Linux (Arch Linux)**
+It runs, but you should use the lighter profile in [Hardware tuning](#hardware-tuning-8-gb-ram--4-gb-vram). Expect swap under load if Chrome/IDE stay open.
+
+---
+
+## Setup on a new machine
+
+### 1. System packages
+
+**Ubuntu / Debian**
+```bash
+sudo apt update
+sudo apt install -y tesseract-ocr tesseract-ocr-eng python3-venv python3-pip
+```
+
+**Arch / CachyOS**
 ```bash
 sudo pacman -S tesseract tesseract-data-eng
 ```
 
-#### **Linux (Ubuntu / Debian)**
-```bash
-sudo apt update
-sudo apt install -y tesseract-ocr tesseract-ocr-eng
-```
-
-#### **macOS (via Homebrew)**
+**macOS**
 ```bash
 brew install tesseract
 ```
 
----
-
-### Step 2: Install & Start Ollama
-
-Muses relies on **Ollama** for running local LLMs (e.g., `gemma3:4b` or `llama3`).
-
-1. **Install Ollama**:
-   - **Linux / macOS**:
-     ```bash
-     curl -fsSL https://ollama.ai/install.sh | sh
-     ```
-   - **Windows**: Download installer from [ollama.ai](https://ollama.ai).
-
-2. **Pull the Required Model**:
-   ```bash
-   ollama pull gemma3:4b
-   ```
-
-3. **Start the Ollama Service**:
-   ```bash
-   ollama serve
-   ```
-   *(Keep this running in a separate terminal window, or start it via systemd: `sudo systemctl enable --now ollama`)*
+**Windows**  
+Install [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) and ensure it is on `PATH`. Prefer WSL2 for fewer path/CUDA issues.
 
 ---
 
-### Step 3: Clone Repository & Create Virtual Environment
+### 2. Ollama
 
 ```bash
-# Clone the repository
+# Linux / macOS
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull the default chat model
+ollama pull gemma3:4b
+
+# Start the server (if not already a service)
+ollama serve
+```
+
+Keep `ollama serve` running (or enable the systemd/user service). Verify:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+---
+
+### 3. Clone and create a virtualenv
+
+```bash
 git clone https://github.com/ASWINKMANOJ/Muses.git
 cd Muses
 
-# Create a virtual environment
 python3 -m venv venv
 
-# Activate the virtual environment
-# On Linux / macOS (bash/zsh):
+# Linux / macOS
 source venv/bin/activate
 
-# On Linux / macOS (fish shell):
-source venv/bin/activate.fish
-
-# On Windows (Command Prompt):
+# Windows (cmd)
 venv\Scripts\activate.bat
 
-# On Windows (PowerShell):
+# Windows (PowerShell)
 venv\Scripts\Activate.ps1
 ```
 
 ---
 
-### Step 4: Install Python Dependencies
+### 4. Install Python dependencies
 
 ```bash
 pip install --upgrade pip
 pip install -r requirement.txt
 ```
 
-*(Optional: For PyTorch CUDA support on Linux/Windows, install PyTorch with CUDA explicitly)*:
+**Optional — PyTorch with CUDA** (NVIDIA GPU; versions vary by driver):
+
 ```bash
 pip install torch --index-url https://download.pytorch.org/whl/cu118
 ```
 
+Muses still defaults `EMBEDDING_DEVICE=cpu` so the GPU is reserved for Ollama. Only change that if you know VRAM headroom.
+
+First run will download Hugging Face models (`bge-base-en-v1.5`, cross-encoder). Needs network once.
+
 ---
 
-### Step 5: Environment Configuration
-
-Copy the sample environment file to `.env`:
+### 5. Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-You can customize options in `.env`:
+Edit `.env` as needed. Important defaults:
 
-```ini
-# LLM (Ollama) Settings
-OLLAMA_URL=http://localhost:11434/api/generate
-LLM_MODEL=gemma3:4b
-LLM_TEMPERATURE=0.1
-LLM_NUM_CTX=4096
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `LLM_MODEL` | `gemma3:4b` | Ollama model name |
+| `LLM_NUM_CTX` | `4096` | Context window (lower on 4 GB VRAM) |
+| `EMBEDDING_MODEL` | `BAAI/bge-base-en-v1.5` | Sentence embedding model |
+| `EMBEDDING_DEVICE` | `cpu` | Keep `cpu` when Ollama uses the GPU |
+| `CHROMA_COLLECTION` | `documents_bge_base` | Change if you switch embedding models |
+| `HYDE_ENABLED` | `true` | Extra LLM call before retrieval |
+| `CROSS_ENCODER_ENABLED` | `true` | Rerank + CRAG confidence |
+| `CRAG_MIN_CONFIDENCE` | `-5.0` | Cross-encoder logit floor |
+| `SEMANTIC_CACHE_ENABLED` | `true` | Cache near-duplicate Q&A |
+| `SEMANTIC_CACHE_THRESHOLD` | `0.92` | Cosine similarity for cache hit |
 
-# Embedding Model (Default: Legal-BERT)
-EMBEDDING_MODEL=nlpaueb/legal-bert-base-uncased
-EMBEDDING_BATCH_SIZE=32
+**Changing `EMBEDDING_MODEL`:** use a new `CHROMA_COLLECTION` name and re-ingest documents. Old vectors are not compatible.
 
-# Retrieval & Hybrid Search
-CHUNK_SIZE=1000
-CHUNK_OVERLAP=150
-RETRIEVAL_TOP_K=5
-BM25_WEIGHT=0.5
-HYDE_ENABLED=true
-
-# Storage Paths
-CHROMA_DB_PATH=db
-UPLOADS_DIR=uploads
+```bash
+# Clean slate after an embedding model change
+rm -rf db/ uploads/manifest.json
+# Then re-upload / re-ingest your files
 ```
 
 ---
 
-## 🏃 Running the Application
+## Run
 
-### Option A: Web UI & Server Mode (Recommended)
-
-Start the FastAPI application server:
+### Web UI + API (recommended)
 
 ```bash
+source venv/bin/activate   # if not already
 python main.py --serve
 ```
 
-With custom host and port:
+Custom bind:
+
 ```bash
 python main.py --serve --host 127.0.0.1 --port 8000
 ```
 
-- **Web Dashboard**: Open [http://localhost:8000](http://localhost:8000) in your web browser.
-- **Interactive API Docs (Swagger UI)**: Access [http://localhost:8000/docs](http://localhost:8000/docs).
+| URL | Purpose |
+|-----|---------|
+| http://localhost:8000 | Web UI |
+| http://localhost:8000/docs | Swagger / OpenAPI |
 
----
-
-### Option B: Interactive CLI Mode
-
-Run Muses directly inside your terminal:
+### Interactive CLI
 
 ```bash
-# Interactive mode (prompts for document path)
 python main.py
-
-# Specify document at startup
+# or ingest then chat:
 python main.py /path/to/contract.pdf
 ```
 
----
-
-## 🛠️ API Reference
-
-Muses provides a RESTful API for document ingestion, querying, and document retrieval.
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/ingest` | Upload file(s) for asynchronous ingestion (`multipart/form-data`) |
-| `GET` | `/api/ingest/{task_id}/status` | Check status and progress of an ingestion task |
-| `POST` | `/api/chat` | Stream an answer for a query via Server-Sent Events (SSE) |
-| `GET` | `/api/documents` | List all ingested documents, page count, and chunk stats |
-| `GET` | `/api/documents/{filename}/download` | Download an uploaded document |
-| `DELETE` | `/api/documents/{filename}` | Delete a document and purge its vector/BM25 embeddings |
+Commands in the CLI: type a question, `ingest` to add another file, `quit` to exit.
 
 ---
 
-### API Usage Examples
+## API reference
 
-#### 1. Ingest a Legal Document (cURL)
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/ingest` | Upload one or more files (`multipart/form-data`, field `files`) |
+| `POST` | `/api/chat` | SSE stream answer (`query`, optional `document_filter`) |
+| `GET` | `/api/documents` | List ingested sources and chunk counts |
+| `GET` | `/api/documents/{filename}/download` | Download original upload |
+| `DELETE` | `/api/documents/{filename}` | Remove vectors, BM25, manifest entry, file; clear cache |
+| `GET` | `/api/eval/benchmark` | Run retrieval benchmark (`?top_k=5`) |
+| `GET` | `/api/cache/stats` | Semantic cache stats |
+| `POST` | `/api/cache/clear` | Clear semantic cache |
+
+### Ingest
+
 ```bash
 curl -X POST http://localhost:8000/api/ingest \
   -F "files=@/path/to/contract.pdf"
 ```
-**Response:**
+
+Example response:
+
 ```json
 {
-  "tasks": [
+  "results": [
     {
-      "task_id": "8f3b2d10-4c11-4f90-a612-c2149b10a202",
       "filename": "contract.pdf",
-      "status": "queued"
+      "status": "success",
+      "chunks": 42,
+      "replaced": 0,
+      "message": ""
     }
   ]
 }
 ```
 
-#### 2. Check Ingestion Task Status
-```bash
-curl http://localhost:8000/api/ingest/8f3b2d10-4c11-4f90-a612-c2149b10a202/status
-```
+`status` may be `success`, `skipped` (identical SHA256 already indexed), or `error`.
 
-#### 3. Query via SSE Stream (cURL)
+### Chat (SSE)
+
 ```bash
 curl -N -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
@@ -275,17 +261,71 @@ curl -N -X POST http://localhost:8000/api/chat \
   }'
 ```
 
----
+Events look like:
 
-## 🧪 Testing & Verification
+```text
+data: {"token": "The "}
+data: {"token": "liability "}
+...
+data: {"done": true}
+```
 
-Run diagnostic scripts to verify system setup and component integration:
+Omit `document_filter` (or pass `[]`) to search all documents. Cache entries are scoped per filter, so scoped and global answers do not collide.
+
+### Delete a document
 
 ```bash
-# Run environment setup check
-python test_setup.py
+curl -X DELETE http://localhost:8000/api/documents/contract.pdf
+```
 
-# Run component-specific tests
+Removes Chroma chunks, BM25 entries, ingest-manifest hashes (so the same file can be re-uploaded), the file under `uploads/`, and clears the semantic cache.
+
+---
+
+## Query pipeline (what happens on each question)
+
+1. **Semantic cache** — if a similar query exists for the same document scope (cosine ≥ threshold), return cached answer.
+2. **HyDE** (optional) — LLM writes a short hypothetical provision; its embedding is averaged with the query embedding.
+3. **Hybrid retrieval** — dense (BGE + Chroma) + BM25 → RRF → optional cross-encoder rerank → top-k.
+4. **CRAG** — if best cross-encoder score &lt; `CRAG_MIN_CONFIDENCE`: re-retrieve without HyDE and with a wider candidate pool; if still low, **refuse** instead of answering from weak context.
+5. **Generate** — stream from Ollama with legal citation system prompt; cache the full answer when confidence is acceptable.
+
+---
+
+## Evaluation
+
+CLI:
+
+```bash
+python test_eval.py --top-k 5 --output eval_report.json
+```
+
+Or:
+
+```bash
+curl "http://localhost:8000/api/eval/benchmark?top_k=5"
+```
+
+Metrics: Hit Rate @ K, MRR, average retrieval score, latency.
+
+Optional labeled set: create `tests/eval_dataset.json`:
+
+```json
+[
+  {
+    "query": "What is the liability cap under Section 4?",
+    "expected_keywords": ["section 4", "liability", "contract.pdf"],
+    "category": "contract_clause"
+  }
+]
+```
+
+Keywords are matched against retrieved chunk **metadata** (source / section / clause). Without a dataset file, a small built-in fallback set is used.
+
+Other smoke scripts:
+
+```bash
+python test_setup.py
 python test_parser.py
 python test_embedder.py
 python test_retrieval.py
@@ -294,18 +334,80 @@ python test_rag.py
 
 ---
 
-## ❓ Troubleshooting
+## Hardware tuning (8 GB RAM / 4 GB VRAM)
 
-| Issue | Cause & Solution |
-|---|---|
-| **`ConnectionError: Cannot connect to Ollama`** | Ollama is not running. Run `ollama serve` in a terminal window. |
-| **`Model 'gemma3:4b' not found`** | Pull the model first by running `ollama pull gemma3:4b`. |
-| **`ModuleNotFoundError: No module named '...'`** | Ensure your virtual environment is activated (`source venv/bin/activate`). |
-| **`TesseractNotFoundError`** | Install Tesseract OCR on your system (see Step 1). |
-| **ChromaDB / Embedding mismatch after config change** | If you change `EMBEDDING_MODEL` in `.env`, purge the database: `rm -rf db/ uploads/manifest.json`. |
+Put these in `.env` (then re-ingest if you change the embedding model or collection):
+
+```ini
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DEVICE=cpu
+EMBEDDING_BATCH_SIZE=8
+CHROMA_COLLECTION=documents_bge_small
+
+LLM_MODEL=gemma3:4b
+LLM_NUM_CTX=2048
+LLM_NUM_PREDICT=512
+LLM_NUM_GPU=99
+
+HYDE_ENABLED=false
+CROSS_ENCODER_ENABLED=true
+SEMANTIC_CACHE_ENABLED=true
+```
+
+Tips:
+
+- Close heavy browser tabs while ingesting or querying.
+- Keep embeddings on **CPU**; let Ollama use the GPU.
+- After switching to `bge-small`, wipe `db/` and `uploads/manifest.json` and re-ingest.
 
 ---
 
-## 📜 License
+## Project layout
 
-[MIT License](LICENSE)
+```text
+Muses/
+├── main.py                 # CLI + --serve entrypoint
+├── requirement.txt
+├── .env.example
+├── frontend/               # Static web UI
+├── app/
+│   ├── api/                # FastAPI app + routes
+│   ├── cache/              # Semantic query cache
+│   ├── core/config.py      # Settings from env
+│   ├── embedding/          # SentenceTransformer wrapper
+│   ├── evaluation/         # Hit@K / MRR benchmark
+│   ├── generation/llm.py   # Ollama + legal system prompt + HyDE
+│   ├── ingestion/          # Parsers + legal chunker
+│   ├── pipeline/           # Ingest + query pipelines
+│   └── retrieval/          # Chroma + BM25 + RRF + rerank
+├── db/                     # Chroma + BM25 index (created at runtime)
+└── uploads/                # Uploaded files + manifest.json
+```
+
+---
+
+## Troubleshooting
+
+| Problem | What to try |
+|---------|-------------|
+| Cannot connect to Ollama | Run `ollama serve`; check `OLLAMA_URL` in `.env` |
+| Model not found | `ollama pull gemma3:4b` (or whatever `LLM_MODEL` is) |
+| CUDA / VRAM OOM during chat | Lower `LLM_NUM_CTX` to `2048`; ensure `EMBEDDING_DEVICE=cpu` |
+| System RAM thrashing / swap | Use `bge-small`, `EMBEDDING_BATCH_SIZE=8`, disable HyDE; free RAM |
+| Embedding / Chroma mismatch | New collection name + `rm -rf db uploads/manifest.json` + re-ingest |
+| Re-upload of same file skipped wrongly | Delete via API (clears manifest); or remove that hash from `uploads/manifest.json` |
+| `TesseractNotFoundError` | Install Tesseract and ensure it is on `PATH` |
+| Import errors | Activate `venv` and re-run `pip install -r requirement.txt` |
+| First query very slow | Models downloading / loading into memory — subsequent calls are faster |
+
+---
+
+## Disclaimer
+
+Muses assists with **document retrieval and explanation**. It is **not legal advice**. Always verify citations against the source PDF and consult a qualified lawyer for legal opinions.
+
+---
+
+## License
+
+MIT

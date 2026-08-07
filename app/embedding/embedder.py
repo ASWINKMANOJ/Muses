@@ -1,6 +1,6 @@
 # app/embedding/embedder.py
 """
-Embedding module with legal-optimized model support.
+Embedding module with retrieval-optimized bi-encoder support.
 
 Using embedding_device="cpu" prevents CUDA VRAM competition with Ollama
 on 4 GB GPUs, while maintaining sub-20ms embedding speed.
@@ -11,6 +11,14 @@ from functools import lru_cache
 from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
+
+# BGE short-query → long-passage models expect this instruction on queries only.
+_BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: "
+
+
+def _is_bge_model(model_name: str) -> bool:
+    name = model_name.lower()
+    return "bge-" in name or "/bge" in name
 
 
 @lru_cache(maxsize=1)
@@ -31,7 +39,7 @@ def get_model() -> SentenceTransformer:
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """
-    Embed a list of raw text strings.
+    Embed a list of raw text strings (passages / chunks — no query instruction).
     """
     model = get_model()
     embeddings = model.encode(
@@ -50,7 +58,13 @@ def embed_chunks(chunks: list[dict]) -> list[list[float]]:
 
 
 def embed_query(query: str) -> list[float]:
-    return embed_texts([query])[0]
+    """
+    Embed a search query. Applies the BGE query instruction when using a BGE model.
+    """
+    text = query
+    if _is_bge_model(settings.embedding_model):
+        text = f"{_BGE_QUERY_PREFIX}{query}"
+    return embed_texts([text])[0]
 
 
 class _LazyModel:

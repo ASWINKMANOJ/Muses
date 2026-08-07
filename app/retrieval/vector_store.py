@@ -7,7 +7,7 @@ Improvements:
   with RRF — parameter-free, consistently beats score-sum combination.
 - Richer metadata stored per chunk: section_path, chunk_type, clause_number,
   file_hash — enables precise filtering (e.g. "find all indemnity clauses").
-- Optional cross-encoder reranker for top-k precision (off by default).
+- Optional cross-encoder reranker for top-k precision.
 - All constants come from centralized settings.
 """
 
@@ -190,6 +190,8 @@ def query_similar(
     if where_clause:
         subset = collection.get(where=where_clause, include=[])
         available = len(subset.get("ids", []))
+        if available == 0:
+            return []
 
     n_fetch = max(1, min(n_results, available))
 

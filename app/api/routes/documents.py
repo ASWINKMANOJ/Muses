@@ -5,6 +5,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from app.retrieval.vector_store import collection, delete_document_chunks
+from app.pipeline.ingest_pipeline import remove_manifest_entries_for_filename
+from app.cache import get_query_cache
 
 router = APIRouter()
 
@@ -74,13 +76,15 @@ async def delete_document(filename: str):
     """
     Permanently delete a document:
     1. Remove all its chunks from the vector store.
-    2. Delete the source file from the uploads directory.
+    2. Remove matching ingest-manifest entries (so re-upload re-indexes).
+    3. Delete the source file from the uploads directory.
+    4. Clear the semantic query cache (answers may reference the doc).
 
     Returns the number of chunks removed and whether the file was deleted.
     """
     safe_name = Path(filename).name
 
-    # 1. Remove chunks from ChromaDB
+    # 1. Remove chunks from ChromaDB + BM25
     try:
         deleted_chunks = delete_document_chunks(safe_name)
     except Exception as e:
@@ -89,7 +93,10 @@ async def delete_document(filename: str):
             detail=f"Failed to remove chunks for '{safe_name}': {e}",
         )
 
-    # 2. Remove file from disk (best-effort — not an error if missing)
+    # 2. Drop stale dedupe hashes so identical re-uploads are not skipped
+    manifest_removed = remove_manifest_entries_for_filename(safe_name)
+
+    # 3. Remove file from disk (best-effort — not an error if missing)
     file_path = UPLOADS_DIR / safe_name
     file_deleted = False
     if file_path.exists():
@@ -97,12 +104,15 @@ async def delete_document(filename: str):
             file_path.unlink()
             file_deleted = True
         except Exception as e:
-            # Log but don't fail the request
             print(f"[documents] Warning: could not delete file '{safe_name}': {e}")
+
+    # 4. Invalidate cached answers that may cite this document
+    get_query_cache().clear()
 
     return {
         "status": "deleted",
         "filename": safe_name,
         "chunks_removed": deleted_chunks,
+        "manifest_entries_removed": manifest_removed,
         "file_deleted": file_deleted,
     }

@@ -97,4 +97,8 @@ async def ingest_documents(files: List[UploadFile] = File(...)):
     # Process all files concurrently off the event loop
     results = await asyncio.gather(*[_ingest_single_file(f) for f in files])
 
+    # Invalidate query cache so stale answers are not served for new docs
+    from app.cache import get_query_cache
+    get_query_cache().clear()
+
     return JSONResponse(content={"results": results})

@@ -147,6 +147,7 @@ def chunk_sections(
                 "section_path": section_path,
                 "chunk_type": chunk_type,
                 "clause_number": clause_number,
+                "file_hash": section.get("file_hash", ""),
             }
 
             # Forward optional OCR metadata

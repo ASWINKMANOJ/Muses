@@ -13,6 +13,7 @@ Improvements:
 import hashlib
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
@@ -29,7 +30,9 @@ from app.core.config                    import settings
 
 # ── Manifest helpers ──────────────────────────────────────────────────────────
 
-def _load_manifest() -> dict:
+_manifest_lock = threading.Lock()
+
+def _load_manifest_unlocked() -> dict:
     path = Path(settings.ingest_manifest_path)
     if path.exists():
         try:
@@ -38,11 +41,40 @@ def _load_manifest() -> dict:
             return {}
     return {}
 
-
-def _save_manifest(manifest: dict) -> None:
+def _save_manifest_unlocked(manifest: dict) -> None:
     path = Path(settings.ingest_manifest_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, indent=2))
+
+def _load_manifest() -> dict:
+    with _manifest_lock:
+        return _load_manifest_unlocked()
+
+def _save_manifest(manifest: dict) -> None:
+    with _manifest_lock:
+        _save_manifest_unlocked(manifest)
+
+
+def remove_manifest_entries_for_filename(filename: str) -> int:
+    """
+    Remove all manifest entries whose recorded filename matches.
+
+    Needed so DELETE /documents/{filename} does not leave a stale hash
+    that would cause a later re-upload of the same bytes to be skipped.
+    Returns the number of manifest keys removed.
+    """
+    safe_name = Path(filename).name
+    with _manifest_lock:
+        manifest = _load_manifest_unlocked()
+        to_remove = [
+            h for h, meta in manifest.items()
+            if isinstance(meta, dict) and meta.get("filename") == safe_name
+        ]
+        for h in to_remove:
+            del manifest[h]
+        if to_remove:
+            _save_manifest_unlocked(manifest)
+        return len(to_remove)
 
 
 def _file_sha256(file_path: str) -> str:
@@ -84,17 +116,25 @@ def ingest_file_pipeline(
 
     if file_hash in manifest:
         cached = manifest[file_hash]
-        print(f"[ingest_pipeline] '{filename}' already ingested "
-              f"({cached['chunks']} chunks, hash={file_hash[:8]}…). Skipping.")
-        _progress("done", 100)
-        return {
-            "status": "skipped",
-            "message": "File already ingested (identical content).",
-            "chunks": cached["chunks"],
-            "replaced": 0,
-            "skipped": True,
-            "file_hash": file_hash,
-        }
+        cached_name = cached.get("filename", filename)
+        # Guard: if vectors were deleted without clearing the manifest, re-ingest.
+        from app.retrieval.vector_store import collection as _chroma
+        still_indexed = _chroma.get(where={"source": cached_name}, include=[]).get("ids", [])
+        if still_indexed:
+            print(f"[ingest_pipeline] '{filename}' already ingested "
+                  f"({cached['chunks']} chunks, hash={file_hash[:8]}…). Skipping.")
+            _progress("done", 100)
+            return {
+                "status": "skipped",
+                "message": "File already ingested (identical content).",
+                "chunks": cached["chunks"],
+                "replaced": 0,
+                "skipped": True,
+                "file_hash": file_hash,
+            }
+        print(f"[ingest_pipeline] Stale manifest for '{filename}' "
+              f"(hash={file_hash[:8]}…, 0 chunks in store). Re-ingesting.")
+        remove_manifest_entries_for_filename(cached_name)
 
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -136,12 +176,14 @@ def ingest_file_pipeline(
     store_embeddings(chunks, embeddings)
 
     # ── 7. Update manifest ────────────────────────────────────────────────────
-    manifest[file_hash] = {
-        "filename": filename,
-        "chunks": len(chunks),
-        "ingested_at": datetime.now(timezone.utc).isoformat(),
-    }
-    _save_manifest(manifest)
+    with _manifest_lock:
+        fresh_manifest = _load_manifest_unlocked()
+        fresh_manifest[file_hash] = {
+            "filename": filename,
+            "chunks": len(chunks),
+            "ingested_at": datetime.now(timezone.utc).isoformat(),
+        }
+        _save_manifest_unlocked(fresh_manifest)
 
     _progress("done", 100)
     print(f"[ingest_pipeline] Done — {len(chunks)} chunks stored for '{filename}'.")
